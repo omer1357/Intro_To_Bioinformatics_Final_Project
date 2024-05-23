@@ -1,0 +1,180 @@
+---
+title: "Final_Project"
+author: "Arad Peron & Omer Arbel"
+date: "2024-05-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Arad:
+#setwd('~/Library/Mobile Documents/com~apple~CloudDocs/Technion/SemesterC/Bioinfo/Final Project/')
+
+#Omer:
+setwd('C:/Users/omer1/Programming/Bioinformatics/Final Project')
+```
+
+```{r}
+library(statgenGWAS)
+library(tidyverse)
+library(qqman)
+library(xCell)
+library(pheatmap)
+```
+
+---- GWAS on same-sex attraction ----
+
+Preparing the data:
+
+```{r}
+GWASResults <- read_tsv("GannaA_prePMID_MTAG_nonhetero_cc_MF.tsv")
+GWASResults_reduce <- GWASResults %>%
+  dplyr::select(SNP, CHR, BP, PVAL) %>%
+  dplyr::rename(P = PVAL) %>%
+  dplyr::filter(!is.na(P))
+GWASResults_reduce <- GWASResults_reduce %>%
+  mutate(P = P*100)
+
+```
+
+QQ-plot:
+```{r}
+qq(GWASResults_reduce$P, main = "Q-Q plot of GWAS p-values", col = "blue4")
+```
+
+As in the plot above, deviations from the red line indeed only occur on the right side of the plot, for a small number of SNPs with an effect on same-sex attraction (and possibly SNPs in linkage disequilibrium (LD)).
+
+
+Manhattan plot:
+```{r}
+significance_threshold = -log10(0.05/10000)
+show(GWASResults_reduce)
+manhattan(GWASResults_reduce, main = "Manhattan Plot", ylim = c(0, 10), 
+          cex = 0.6, cex.axis = 0.9, col = c("blue4", "orange3"), 
+          suggestiveline = FALSE, genomewideline = FALSE, 
+          chrlabs = c(1:20, "P", "Q"))
+abline(h = significance_threshold, col = "red", lty = "dashed")
+```
+
+We will focus on the gene of the 2 most significant SNPs:
+
+```{r}
+snpsOfInterest <- c("rs10261857", "rs10275935")
+manhattan(GWASResults_reduce, highlight = snpsOfInterest)
+```
+We can see that this is indeed a place of interest on the genome, while having 2 significant SNPs (after taking in account the number of SNPs checked) 
+
+```{r}
+manhattan(subset(GWASResults_reduce, CHR == 7), highlight = snpsOfInterest, xlim = c(114800000, 115400000))
+```
+This is the place on the genome of the gene "LINC01392".
+
+Summary for "LINC01392" from GeneCards:
+LINC01392 (Long Intergenic Non-Protein Coding RNA 1392) is an RNA Gene, and is affiliated with the lncRNA class. Diseases associated with LINC01392 include Amyotrophic Lateral Sclerosis Type 12.
+
+We looked for information about this gene and found out that while there is not a surely known influence for it, it's been studied multiple times with the context of depression, smoking/drugs/alcohol habits and intelligence.
+
+According to this we decided to check for ourselves how significant this gene is for one of these contexts, and specifically - depression (MDD - Major depressive disorder). And we decided to do that using bulk RNA differential gene expression analysis and xCell.
+
+
+---- Bulk RNA On differential gene expression analysis MDD ----
+
+Preparing the data:
+
+```{r}
+counts <- read_tsv("GSE190518_counts.tsv")
+
+counts <- counts[, -1]
+counts <- counts[,1:9]
+
+names(counts)[1] <- "Gene"
+
+# Keep only the first occurrence of each gene name
+counts_unique <- counts %>%
+  distinct(Gene, .keep_all = TRUE)
+counts_unique <- as.data.frame(counts_unique)
+
+counts_final <- data.frame(counts_unique, row.names = 1)
+
+# Make a nice and clean metadata
+gse <- getGEO(filename="GSE190518_series_matrix.txt")
+
+metadata <- as_tibble(gse) %>% 
+  dplyr::select(sample = title, disease = disease.state.ch1) %>% 
+  mutate(disease = ifelse(disease == "major depressive disorder patients", "MDD", disease)) %>% 
+  mutate(disease = ifelse(disease == "healthy controls", "Healthy", disease)) %>% 
+  mutate(disease = factor(disease, levels = c('Healthy','MDD')))
+
+all(metadata$sample == colnames(counts_unique)[-1])
+```
+
+Run DESeq2
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData=counts_unique,
+                              colData=metadata,
+                              design= ~disease,
+                              tidy=TRUE)
+dds <- DESeq(dds)
+
+# Adjust (Shrink) Log2 Fold Change (LFC) values, order results by p-values
+resLFC <- lfcShrink(dds, coef="disease_MDD_vs_Healthy", type="apeglm")
+resLFC$symbol <- counts_unique$Gene
+resOrdered <- resLFC[order(resLFC$pvalue),]
+```
+Volcano plot:
+
+```{r}
+EnhancedVolcano::EnhancedVolcano(resOrdered,
+                lab = resOrdered$symbol,
+                x = 'log2FoldChange',
+                y = 'padj',
+                labSize=3,
+                FCcutoff=2 )
+```
+visualize the top 10 gene expressed in MDD and in healthy patiants a heatmap:
+
+```{r}
+selectUp <- resOrdered$symbol[resOrdered$log2FoldChange>0][1:10]
+selectDown <- resOrdered$symbol[resOrdered$log2FoldChange<0][1:10]
+select <- c(selectUp,selectDown)
+
+df <- data.frame(row.names = colnames(dds),
+                 disease = colData(dds)$disease)
+
+colnames(df) <- "Condition"
+
+# Get normalized counts (also try rlog, and counts with normalized=T)
+normcounts = assay(vst(dds, blind=T))
+pheatmap::pheatmap(normcounts[select,], cluster_rows=TRUE,
+         show_colnames = FALSE, cluster_cols=TRUE, 
+         annotation_col=df, scale = 'row', cutree_cols = 2, cutree_rows = 2)
+```
+
+
+
+
+---- Bulk RNA xCell on MDD ---- 
+
+Run xCell
+
+```{r}
+counts.xCell <- xCellAnalysis(counts_final)
+
+#counts.xCell.filtered <- counts.xCell[rowMeans(counts.xCell) > 0.005,]
+counts.xCell.filtered <- counts.xCell[apply(counts.xCell, 1, max) > 0.005, ]
+counts.xCell.filtered.scaled <- t(scale(t(counts.xCell.filtered)))
+counts.xCell.filtered.scaled[counts.xCell.filtered.scaled>1] <- 1
+counts.xCell.filtered.scaled[counts.xCell.filtered.scaled< -1] <- -1
+
+
+pheatmap(counts.xCell.filtered.scaled, show_colnames = F)
+```
+
+```{r}
+
+```
+
