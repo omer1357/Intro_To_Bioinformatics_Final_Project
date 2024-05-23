@@ -11,14 +11,15 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 #Arad:
-#setwd('~/Library/Mobile Documents/com~apple~CloudDocs/Technion/SemesterC/Bioinfo/Final Project/')
+setwd('~/Library/Mobile Documents/com~apple~CloudDocs/Technion/SemesterC/Bioinfo/Final Project/')
 
 #Omer:
-setwd('C:/Users/omer1/Programming/Bioinformatics/Final Project')
+#setwd('~/Desktop/Technion/semesterC/Bioinformatics/')
 ```
 
 ```{r}
 library(statgenGWAS)
+
 library(tidyverse)
 library(qqman)
 ```
@@ -29,8 +30,6 @@ GWASResults_reduce <- GWASResults %>%
   dplyr::select(SNP, CHR, BP, PVAL) %>%
   dplyr::rename(P = PVAL) %>%
   dplyr::filter(!is.na(P))
-GWASResults_reduce <- GWASResults_reduce %>%
-  mutate(P = P*100)
 
 ```
 
@@ -45,13 +44,11 @@ As in the plot above, deviations from this line should only occur on the right s
 
 Manhattan plot:
 ```{r}
-significance_threshold = -log10(0.05/10000)
 show(GWASResults_reduce)
 manhattan(GWASResults_reduce, main = "Manhattan Plot", ylim = c(0, 10), 
           cex = 0.6, cex.axis = 0.9, col = c("blue4", "orange3"), 
           suggestiveline = FALSE, genomewideline = FALSE, 
           chrlabs = c(1:20, "P", "Q"))
-abline(h = significance_threshold, col = "red", lty = "dashed")
 ```
 
 
@@ -65,5 +62,5 @@ manhattan(GWASResults_reduce, highlight = snpsOfInterest)
 ```
 
 ```{r}
-manhattan(subset(GWASResults_reduce, CHR == 7), highlight = snpsOfInterest, xlim = c(44800000, 45000000))
+manhattan(subset(gwasResults_reduce, CHR == 7), highlight = snpsOfInterest, xlim = c(44800000, 45000000))
 ```
